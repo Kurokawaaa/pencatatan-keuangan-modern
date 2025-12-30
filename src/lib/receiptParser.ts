@@ -1,62 +1,65 @@
-// lib/receiptParser.ts
-
-export type ParsedItem = {
+export interface Item {
   nama: string;
   qty: number;
-  angka: number[];
-};
+  harga: number;
+  total: number;
+}
 
-export function parseReceiptText(text: string): ParsedItem[] {
-  const lines = text
+/**
+ * Ambil harga format: 13,500 | 26.800 | 11000
+ */
+function extractHarga(text: string): number[] {
+  const matches = text.match(/\d{1,3}(?:[.,]\d{3})+/g);
+  if (!matches) return [];
+
+  return matches.map(n =>
+    parseInt(n.replace(/[.,]/g, ""), 10)
+  );
+}
+
+/**
+ * Ambil nama + qty dari OCR kiri
+ */
+function parseNama(text: string): string[] {
+  return text
     .split("\n")
     .map(l => l.trim())
-    .filter(Boolean);
+    .filter(l =>
+      l.length > 3 &&
+      !l.match(/^\d+[.,]?\d*$/) &&      // bukan angka saja
+      !l.match(/TOTAL|SUBTOTAL|CASH/i)
+    )
+    .map(line =>
+      line
+        .replace(/\b\d+[.,]?\d*\b/g, "")   // hapus angka
+        .replace(/\b(ML|GR|G|KG|L|X)\b/gi, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
+}
 
-  const items: ParsedItem[] = [];
 
-  for (const line of lines) {
-    if (
-      line.includes("TOTAL") ||
-      line.includes("CANCEL") ||
-      line.includes("DISC")
-    ) continue;
+export function parseReceipt(
+  textNama: string,
+  textHarga: string
+) {
+  const namaList = parseNama(textNama);
+  const hargaList = extractHarga(textHarga);
 
-    if (!/[A-Z]/i.test(line)) continue;
+  const items = [];
 
-    const qty = extractQty(line);
-    const angka = extractNumbers(line);
-    const nama = extractName(line);
+  for (let i = 0; i < namaList.length; i++) {
+    const harga = hargaList[i] ?? 0;
 
-    if (!nama) continue;
-
-    items.push({ nama, qty, angka });
+    items.push({
+      nama: namaList[i],
+      qty: 1,
+      harga,
+      total: harga,
+    });
   }
 
   return items;
 }
 
-function extractQty(line: string): number {
-  const match =
-    line.match(/\b(\d+)\s*X\b/i) ||
-    line.match(/\bX\s*(\d+)\b/i) ||
-    line.match(/\b(\d+)\b$/);
 
-  return match ? parseInt(match[1], 10) : 1;
-}
-
-function extractNumbers(line: string): number[] {
-  const matches = line.match(/\d+[.,']?\d*/g);
-  if (!matches) return [];
-
-  return matches.map(n =>
-    parseInt(n.replace(/[.,']/g, ""), 10)
-  );
-}
-
-function extractName(line: string): string {
-  return line
-    .replace(/\d+[.,']?\d*/g, "")
-    .replace(/\bX\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}

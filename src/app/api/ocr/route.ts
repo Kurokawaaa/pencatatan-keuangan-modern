@@ -3,69 +3,57 @@ import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { parseReceiptText } from "@/lib/receiptParser";
+import { preprocessHarga } from "@/lib/preprocess";
+import { parseReceipt } from "@/lib/receiptParser";
 
+function runTesseract(imagePath: string): Promise<string> {
+  const out = imagePath.replace(".png", "");
+
+  return new Promise((resolve, reject) => {
+    exec(`tesseract "${imagePath}" "${out}" -l ind`, err => {
+      if (err) return reject(err);
+      const text = fs.readFileSync(out + ".txt", "utf8");
+      fs.unlinkSync(out + ".txt");
+      resolve(text);
+    });
+  });
+}
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const file = formData.get("image") as File | null;
+    const file = formData.get("image") as File;
 
     if (!file) {
-      return NextResponse.json(
-        { error: "File tidak ditemukan" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "File kosong" }, { status: 400 });
     }
 
-    // convert ke buffer
     const buffer = Buffer.from(await file.arrayBuffer());
+    const temp = os.tmpdir();
 
-    // file sementara
-    const tempDir = os.tmpdir();
-    const imagePath = path.join(tempDir, `struk-${Date.now()}.png`);
-    const outputPath = path.join(tempDir, `result-${Date.now()}`);
+    // ===== OCR NAMA (FULL IMAGE) =====
+    const imgNama = path.join(temp, `nama-${Date.now()}.png`);
+    fs.writeFileSync(imgNama, buffer);
+    const textNama = await runTesseract(imgNama);
+    fs.unlinkSync(imgNama);
 
-    fs.writeFileSync(imagePath, buffer);
+    // ===== OCR HARGA (KANAN SAJA) =====
+    const hargaBuffer = await preprocessHarga(buffer);
+    const imgHarga = path.join(temp, `harga-${Date.now()}.png`);
+    fs.writeFileSync(imgHarga, hargaBuffer);
+    const textHarga = await runTesseract(imgHarga);
+    fs.unlinkSync(imgHarga);
 
-    // Promise wrapper supaya bisa await
-    const text = await new Promise<string>((resolve, reject) => {
-      exec(
-        `tesseract "${imagePath}" "${outputPath}" -l ind`,
-        (error) => {
-          fs.unlinkSync(imagePath);
+    // ===== PARSING =====
+    const items = parseReceipt(textNama, textHarga);
 
-          if (error) {
-            reject(error);
-            return;
-          }
+    return NextResponse.json({ items });
 
-          const resultText = fs.readFileSync(
-            `${outputPath}.txt`,
-            "utf8"
-          );
-
-          fs.unlinkSync(`${outputPath}.txt`);
-          resolve(resultText);
-        }
-      );
-    });
-
-    const items = parseReceiptText(text);
-
-    return NextResponse.json({
-    rawText: text,
-    items,
-    });
-
-
-  } catch (err: any) {
-    console.error("OCR CLI Error:", err);
+  } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: "Gagal membaca struk" },
+      { error: "OCR gagal" },
       { status: 500 }
     );
   }
-
-  
 }
